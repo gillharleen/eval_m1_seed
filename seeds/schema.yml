@@ -1,0 +1,57 @@
+version: 2
+
+seeds:
+  - name: customers
+    config:
+      column_types:
+        customer_id: integer
+        full_name: text
+        email: text
+        city: text
+        created_at: timestamp
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+
+  - name: products
+    config:
+      column_types:
+        product_id: integer
+        product_name: text
+        category: text
+        price: numeric(10,2)
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+
+  - name: orders
+    config:
+      column_types:
+        order_id: integer
+        customer_id: integer
+        order_date: date
+        status: text
+        updated_at: timestamp
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+
+  - name: order_items
+    config:
+      column_types:
+        order_item_id: integer
+        order_id: integer
+        product_id: integer
+        quantity: integer
+        unit_price: numeric(10,2)
+    columns:
+      - name: order_item_id
+        tests:
+          - unique
+          - not_null
