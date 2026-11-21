@@ -8,9 +8,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "${POSTGRES_PORT}:${POSTGRES_INT_PORT}"
-    volumes:
-      - ./ingestion/init.sql:/docker-entrypoint-initdb.d/init.sql
-
+    
   # pgadmin to see the db in browser, localhost:5050
   pgadmin:
     image: dpage/pgadmin4:latest

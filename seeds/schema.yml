@@ -9,6 +9,7 @@ seeds:
         email: text
         city: text
         created_at: timestamp
+        loaded_at: timestamp
     columns:
       - name: customer_id
         tests:
@@ -22,6 +23,7 @@ seeds:
         product_name: text
         category: text
         price: numeric(10,2)
+        loaded_at: timestamp
     columns:
       - name: product_id
         tests:
@@ -36,6 +38,7 @@ seeds:
         order_date: date
         status: text
         updated_at: timestamp
+        loaded_at: timestamp
     columns:
       - name: order_id
         tests:
@@ -50,6 +53,7 @@ seeds:
         product_id: integer
         quantity: integer
         unit_price: numeric(10,2)
+        loaded_at: timestamp
     columns:
       - name: order_item_id
         tests:

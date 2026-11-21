@@ -1,1 +1,1 @@
-select * from {{ source('raw', 'products') }}
+select * from {{ ref('products') }}
