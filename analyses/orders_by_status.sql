@@ -1,5 +1,3 @@
--- Question: how many orders are in each status, and what are they worth?
--- Uses: aggregation only (no join needed).
 select
     status,
     count(distinct order_id) as orders,

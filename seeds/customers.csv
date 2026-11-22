@@ -1,5 +1,5 @@
 customer_id,full_name,email,city,created_at,loaded_at
-1,Aarav Mehta,aarav.mehta@example.com,Delhi,2026-10-26 10:00:00,2026-11-20 10:00:00
+1,aArAv   mEhTa,aarav.mehta@example.com, delhi ,2026-10-26 10:00:00,2026-11-20 10:00:00
 2,Priya Nair,PRIYA.NAIR@EXAMPLE.COM,Kochi,2026-10-27 10:00:00,2026-11-20 10:00:00
 3,Rohan Gupta,"  rohan.gupta@example.com  ",Jaipur,2026-10-28 10:00:00,2026-11-20 10:00:00
 4,Simran Kaur,simran.kaur@example.com,Amritsar,2026-10-29 10:00:00,2026-11-20 10:00:00

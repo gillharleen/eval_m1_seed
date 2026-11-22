@@ -1,5 +1,3 @@
--- Question: how much revenue does each product category bring in?
--- Uses: JOIN (fact to dim_products) + aggregation. Cancelled orders are excluded.
 select
     p.category,
     count(distinct f.order_id) as orders,

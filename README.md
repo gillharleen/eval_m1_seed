@@ -22,25 +22,21 @@ A small analytical data model for a mock online shop. Raw data is loaded into a 
 
 ```
 eval_m1/
-├── .env.example              # template for database settings (copy to .env)
 ├── docker-compose.yml        # PostgreSQL container
 ├── pyproject.toml            # Python dependencies (uv)
 ├── dbt_project.yml           # dbt settings: layers, schemas, owners
 ├── profiles.yml              # dbt connection (reads values from .env)
-├── run_query.sh              # helper to run a .sql file against the database
-├── ingestion/
-│   ├── init.sql              # creates the raw schema and tables on first start
-│   ├── load_raw_data.py      # loads mock data (full load)
-│   └── load_new_batch.py     # simulates a new batch (for the incremental demo)
+├── seeds/
+│   ├── schema.yml              # table definition of raw tables
+│   └── *.csv                   # raw data for 4 tables
 ├── macros/
-│   ├── generate_schema_name.sql   # clean schema names: bronze, silver, gold
 │   └── clean_text.sql             # reusable trim + lowercase
 ├── models/
 │   ├── bronze/               # sources.yml and 4 bronze models
 │   ├── silver/               # 4 silver models and schema.yml
 │   └── gold/                 # dim_customers, dim_products, fct_orders, schema.yml
 ├── tests/                    # singular (custom SQL) tests
-└── queries/                  # analytical SQL queries
+└── analyses/                  # analytical SQL queries
 ```
 
 ---
@@ -51,7 +47,7 @@ Data moves through five stages. Each stage lives in its own PostgreSQL schema, s
 
 ```mermaid
 flowchart LR
-    A["Python loaders<br/>load_raw_data.py<br/>load_new_batch.py"] --> B[("raw<br/>source tables")]
+    A["dbt seed<br/>load raw data"] --> B[("raw<br/>source tables")]
     B --> C["Bronze<br/>untouched copy"]
     C --> D["Silver<br/>cleaned data"]
     D --> E["Gold<br/>star schema"]
@@ -60,11 +56,11 @@ flowchart LR
 
 | Stage | Schema | What happens |
 |---|---|---|
-| Raw | `raw` | Mock shop data is loaded the way an application database would hold it. It is never modified by dbt. |
+| Raw | `raw` | Mock shop data is loaded using `dbt seed`. It is never modified by dbt. |
 | Bronze | `bronze` | A one-to-one copy of each raw table, managed by dbt. |
 | Silver | `silver` | Cleaned and standardised: spaces trimmed, emails and statuses lowercased, invalid rows removed. |
 | Gold | `gold` | Analytics-ready star schema: `fct_orders`, `dim_customers`, `dim_products`. |
-| Analytics | n/a | SQL queries in `queries/` answer business questions from the Gold tables. |
+| Analytics | n/a | SQL queries in `Analyses/` answer business questions from the Gold tables. |
 
 Raw data is deliberately untidy (mixed-case emails, extra spaces) so that the Silver layer has real cleaning to do.
 
@@ -131,7 +127,7 @@ Each layer is a folder under `models/`. Its materialisation, schema and owner ar
 
 ```mermaid
 flowchart LR
-    subgraph RAW["raw"]
+    subgraph RAW["raw (tables, loaded from seed)"]
         r1["raw.customers"]
         r2["raw.products"]
         r3["raw.orders"]
@@ -164,9 +160,7 @@ Key points:
 
 - **Sources:** `models/bronze/sources.yml` declares the four raw tables. Bronze models read them with `source('raw', '...')`.
 - **Model dependencies:** later layers read earlier ones with `ref('...')`, so dbt builds everything in the correct order.
-- **Clean schema names:** `macros/generate_schema_name.sql` overrides dbt's default naming, so layers land in `bronze`, `silver` and `gold` and not `public_bronze` and so on.
 - **Reusable macro:** `macros/clean_text.sql` (trim and lowercase) is used by Silver models for emails and statuses.
-- **Ownership:** the `+meta: owner:` setting on each layer in `dbt_project.yml` records who is responsible for it.
 
 Silver cleaning rules:
 
@@ -186,43 +180,28 @@ Silver cleaning rules:
 
 ```bash
 # 1. Get the code
-git clone https://github.com/gillharleen/eval_m1.git
-cd eval_m1
+git clone https://github.com/gillharleen/eval_m1_seed.git
+cd eval_m1_seed
 
-# 2. Install Python packages (creates .venv, installs dbt-postgres, faker, psycopg2)
+# 2. Install Python packages (creates .venv, installs dbt-postgres)
 uv sync
 source .venv/bin/activate  
 
-# 3. Create your settings file, then edit the values if needed
-cp .env.example .env
+# 3. Create .env file
+nano .env
 
-# 4. Start PostgreSQL (the raw tables are created automatically from ingestion/init.sql)
+# 4. Start PostgreSQL
 docker compose up -d
 
-# 5. Check the raw tables exist
-Login to postgres db client and verify raw.* tables.
-
-# 6. Load mock data into the raw tables
-python3 ingestion/load_raw_data.py
-
-# 7. Check dbt can connect
+# 5. Check dbt can connect
 dbt debug
+
+# 6. Load seed files's raw data into the raw tables
+dbt seed
 
 # 8. Build all models and run all tests
 dbt build
 ```
-
-Expected results:
-
-- Step 5 should see tables in raw schema: `customers`, `products`, `orders`, `order_items`.
-- Step 6 prints `Loaded 10 customers, 5 products, 20 orders, ... order items.`
-- Step 7 ends with `All checks passed!`
-- Step 8 ends with `ERROR=0`.
-
-Notes:
-
-- **Settings live in `.env`** (database user, password, port and name). It is ignored by Git, and `.env.example` is the committed template. Newer dbt versions read `.env` automatically. If yours does not, use `uv run --env-file .env dbt build`.
-- If a `packages.yml` file exists, run `dbt deps` once before `dbt build`.
 
 ---
 
@@ -274,7 +253,7 @@ dbt source freshness                      # check how recent the raw data is
 
 ```bash
 dbt run --select fct_orders --full-refresh   # first load: all rows
-python3 ingestion/load_new_batch.py           # simulate new and changed orders
+# add record updates to raw orders and order_items tables
 dbt run --select fct_orders                  # incremental: only new and changed rows
 Run query - select dbt_loaded_at, count(*) from gold.fct_orders group by 1 order by 1;
 ```
@@ -282,8 +261,9 @@ Run query - select dbt_loaded_at, count(*) from gold.fct_orders group by 1 order
 ### Backfill
 
 ```bash
-# Window of dates to reprocess (macOS shown; on Linux use: date -d '30 days ago' +%F)
-START=$(date -v-30d +%F); END=$(date -v-20d +%F)
+# Window of dates to reprocess (macOS shown; on Linux use: date -d '14 days ago' +%F)
+START=$(date -v-14d +%F); END=$(date -v-9d +%F)
+echo $START, $END
 
 # Reprocess only that window
 dbt run --select fct_orders --vars "{backfill_start: '$START', backfill_end: '$END'}"
@@ -301,7 +281,7 @@ dbt docs serve                            # opens the model documentation in a b
 ```bash
 docker compose down -v                           # deletes the database and its data
 docker compose up -d
-python3 ingestion/load_raw_data.py
+dbt seed
 dbt build
 ```
 
@@ -350,8 +330,7 @@ Run query - "select dbt_loaded_at, count(*) from gold.fct_orders group by 1 orde
 # -> one timestamp, all rows (about 750)
 
 # 2. New batch of data
-python3 ingestion/load_new_batch.py
-# -> Added 10 new orders (...) and updated 5 existing orders.
+# add new records for incremental load
 
 # 3. Incremental run
 dbt run --select fct_orders
@@ -369,7 +348,7 @@ dbt run --select fct_orders
 # -> INSERT 0 0, nothing newer than the watermark
 ```
 
-`INSERT 0 80` in the dbt log means 80 rows were inserted in that run. At this data size the runtime difference is tiny, so compare **rows processed** and the `dbt_loaded_at` batches as evidence.
+`INSERT 0 6` in the dbt log means 6 rows were inserted in that run. At this data size the runtime difference is tiny, so compare **rows processed** and the `dbt_loaded_at` batches as evidence.
 
 ---
 
@@ -399,7 +378,7 @@ The model code that implements this:
 {% if is_incremental() %}
     {% if var('backfill_start', none) is not none %}
 where o.order_date >= '{{ var('backfill_start') }}'
-  and o.order_date <= '{{ var('backfill_end', '9999-12-31') }}'
+  and o.order_date <= '{{ var('backfill_end') }}'
     {% else %}
 where o.updated_at > (select max(updated_at) from {{ this }})
     {% endif %}
@@ -407,119 +386,3 @@ where o.updated_at > (select max(updated_at) from {{ this }})
 ```
 
 Rows in the window are replaced through `unique_key`, and the rest of the history stays untouched.
-
-### Demo
-
-```bash
-# 1. Pick a window of dates (macOS shown)
-START=$(date -v-30d +%F); END=$(date -v-20d +%F)
-echo $START $END
-
-# 2. Baseline: status counts for the window
-Run query - "select status, count(*) from gold.fct_orders where order_date between '$START' and '$END' group by 1 order by 1;"
-
-# 3. Silently correct old data in the source (updated_at is not touched)
-Run query - "update raw.orders set status = 'cancelled' where order_date between '$START' and '$END';"
-
-# 4. A normal incremental run misses the change
-dbt run --select fct_orders
-Run query - "select status, count(*) from gold.fct_orders where order_date between '$START' and '$END' group by 1 order by 1;"
-# -> counts are unchanged: Gold is stale
-
-# 5. Backfill just that window
-dbt run --select fct_orders --vars "{backfill_start: '$START', backfill_end: '$END'}"
-Run query - "select status, count(*) from gold.fct_orders where order_date between '$START' and '$END' group by 1 order by 1;"
-# -> every order in the window now shows cancelled
-
-# 6. Safety check: no duplicates (must return 0 rows)
-Run query - "select order_item_id, count(*) from gold.fct_orders group by 1 having count(*) > 1;"
-```
-
-To reset the demo data: `python3 ingestion/load_raw_data.py`, then `dbt run --select fct_orders --full-refresh`.
-
----
-
-## Data freshness checks
-
-Freshness checks tell you when the raw data has stopped arriving. They are configured on the source in `models/bronze/sources.yml`:
-
-```yaml
-sources:
-  - name: raw
-    schema: raw
-    loaded_at_field: loaded_at
-    freshness:
-      warn_after: {count: 12, period: hour}
-      error_after: {count: 24, period: hour}
-```
-
-- `loaded_at_field` is the column that records when each row was inserted. Every raw table has one, filled automatically.
-- dbt compares the newest `loaded_at` in each table with the current time.
-
-| Age of the newest row | Result |
-|---|---|
-| Up to 12 hours | PASS |
-| 12 to 24 hours | WARN |
-| Over 24 hours | ERROR |
-
-```bash
-dbt source freshness
-```
-
-`dbt build` and `dbt run` do not check freshness. Run this command yourself, or schedule it.
-
-### Demo (without waiting)
-
-Make the data look old, then check:
-
-```bash
-# Fresh data: everything passes
-python3 ingestion/load_raw_data.py
-dbt source freshness
-
-# Make raw.orders look 13 hours old: WARN
-Run query - "update raw.orders set loaded_at = now() - interval '13 hours';"
-dbt source freshness
-
-# Make raw.orders look 25 hours old: ERROR
-Run query - "update raw.orders set loaded_at = now() - interval '25 hours';"
-dbt source freshness
-
-# Reset: fresh again
-Run query - "update raw.orders set loaded_at = now();"
-dbt source freshness
-```
-
----
-
-## Tests
-
-| Type | Where | What it checks |
-|---|---|---|
-| Generic | `models/silver/schema.yml`, `models/gold/schema.yml` | `not_null` and `unique` on keys, `relationships` from `fct_orders` to both dimensions |
-| Singular | `tests/*.sql` | Custom SQL that returns the bad rows. The test passes when it returns none. |
-
-Example: `tests/assert_clean_emails.sql` fails if any Silver email still has capital letters or extra spaces.
-
-```bash
-dbt test                              # everything
-dbt test --select test_type:singular  # custom SQL tests only
-```
-
----
-
-## SQL queries
-
-The `queries/` folder has analytical queries on the Gold tables:
-
-| File | Shows |
-|---|---|
-| `revenue_by_month.sql` | Aggregation: revenue per month |
-| `top_products.sql` | Join and aggregation: the 5 best-selling products |
-| `top_customers.sql` | Analytical use case: the 10 highest-spending customers |
-| `revenue_by_category_city.sql` | Analytical use case: revenue by product category and city |
-
-
-Run `dbt build` first so the Gold tables exist.
-
----
