@@ -12,7 +12,7 @@ A small analytical data model for a mock online shop. Raw data is loaded into a 
 6. [Data freshness checks](#data-freshness-checks)
 7. [Incremental models](#incremental-models)
 8. [Backfill strategy](#backfill-strategy)
-9. [Tests](#tests)
+9. [Tests](#test)
 ---
 
 ## Project structure
