@@ -9,13 +9,10 @@ A small analytical data model for a mock online shop. Raw data is loaded into a 
 3. [Data model](#data-model)
 4. [How the medallion layers are implemented](#how-the-medallion-layers-are-implemented)
 5. [Setup and run](#setup-and-run)
-6. [Command cheat sheet](#command-cheat-sheet)
+6. [Data freshness checks](#data-freshness-checks)
 7. [Incremental models](#incremental-models)
 8. [Backfill strategy](#backfill-strategy)
-9. [Data freshness checks](#data-freshness-checks)
-10. [Tests](#tests)
-11. [SQL queries](#sql-queries)
-
+9. [Tests](#tests)
 ---
 
 ## Project structure
@@ -243,7 +240,7 @@ dbt ls --resource-type test               # list tests only
 
 Compiled SQL is in `target/compiled/`. The SQL dbt actually executed is in `target/run/`.
 
-### Freshness
+### Data freshness checks
 
 ```bash
 dbt source freshness                      # check how recent the raw data is
