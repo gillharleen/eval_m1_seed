@@ -7,14 +7,14 @@ A small analytical data model for a mock online shop. Raw data is loaded into a 
 1. [Project structure](#project-structure)
 2. [Data lifecycle](#data-lifecycle)
 3. [Data model](#data-model)
-4. [How the medallion layers are implemented](#how-the-medallion-layers-are-implemented)
-5. [Setup and run](#setup-and-run)
-6. [Data freshness checks](#data-freshness-checks)
-7. [Incremental models](#incremental-models)
-8. [Backfill strategy](#backfill-strategy)
-9. [Tests](#test)
----
-
+4. [Star schema vs 3NF](#star-schema-vs-3nf)
+5. [How the medallion layers are implemented](#how-the-medallion-layers-are-implemented)
+6. [Setup and run](#setup-and-run)
+7. [Data freshness checks](#data-freshness-checks)
+8. [Incremental models](#incremental-models)
+9. [Backfill strategy](#backfill-strategy)
+10. [Analytical queries](#analytical-queries)
+11. [Tests](#tests)
 ## Project structure
 
 ```
@@ -109,9 +109,66 @@ erDiagram
 | `gold.dim_products` | Dimension | product |
 
 `line_amount` is `quantity * unit_price`. `dbt_loaded_at` records which dbt run wrote each row.
-
 ---
+## Star schema vs 3NF
 
+There are two common ways to organise tables.
+
+| | 3NF (normalised) | Star schema |
+|---|---|---|
+| Idea | Each fact is stored once, in its own table. Tables are linked by keys | One fact table with the numbers, surrounded by dimension tables that describe them |
+| Best for | Apps that write data (orders, payments) | Reports and analysis |
+| Joins in a query | Many | Few |
+| Repeated data | None | Some, on purpose |
+
+**In this project**
+
+- The raw tables are in 3NF: `customers`, `products`, `orders`, `order_items`.
+- The Gold layer is a star schema.
+
+| 3NF (raw) | Star (gold) |
+|---|---|
+| `orders` + `order_items` | `fct_orders` (one table; order date and status are copied onto each item row) |
+| `customers` | `dim_customers` |
+| `products` | `dim_products` |
+
+**Why a star schema**
+
+1. The questions are analytical (revenue by category, orders by status), so the data is mostly read and summed, not updated.
+2. Fewer joins. `fct_orders` already holds `customer_id` and `product_id`, so a query does not have to go through `orders`.
+3. Easy to read: numbers are in one table and descriptions are in the dimensions.
+4. The 3NF copy is not lost. It stays in the raw layer.
+
+**The same question both ways** (revenue by category and city, without cancelled orders). Both return identical results.
+
+3NF, using the normalised Silver tables (3 joins):
+
+```sql
+select p.category, c.city, sum(oi.quantity * oi.unit_price) as revenue
+from dbt_silver.silver_order_items oi
+join dbt_silver.silver_orders    o on o.order_id    = oi.order_id
+join dbt_silver.silver_products  p on p.product_id  = oi.product_id
+join dbt_silver.silver_customers c on c.customer_id = o.customer_id
+where o.status <> 'cancelled'
+group by p.category, c.city
+order by revenue desc;
+```
+
+Star, using the Gold tables (2 joins):
+
+```sql
+select p.category, c.city, sum(f.line_amount) as revenue
+from dbt_gold.fct_orders f
+join dbt_gold.dim_products  p on p.product_id  = f.product_id
+join dbt_gold.dim_customers c on c.customer_id = f.customer_id
+where f.status <> 'cancelled'
+group by p.category, c.city
+order by revenue desc;
+```
+
+The star version needs one join less here. The gap grows as a 3NF model gets more tables.
+
+Trade-off: order date and status are repeated on every item row, so the fact table is bigger, and a changed order means several rows must be replaced. That is why fct_orders is incremental with a unique_key (see Incremental models). There is no separate dim_orders: order_id, order_date and status live in the fact table to keep the demo small.
 ## How the medallion layers are implemented
 
 Each layer is a folder under `models/`. Its materialisation, schema and owner are set once in `dbt_project.yml`, and every model in the folder inherits them.
@@ -245,6 +302,14 @@ Compiled SQL is in `target/compiled/`. The SQL dbt actually executed is in `targ
 ```bash
 dbt source freshness                      # check how recent the raw data is
 ```
+Freshness compares the newest `loaded_at` in each raw table with the current time. The limits are set in `models/bronze/sources.yml`:
+
+| Table | Warn after | Error after | Why |
+|---|---|---|---|
+| `orders`, `order_items` | 1 day | 2 days | New data arrives often |
+| `customers`, `products` | 7 days | 30 days | These change rarely |
+
+Seed data does not change, so `loaded_at` gets older every day and `orders` / `order_items` will warn after a day. Loading a new batch with a current `loaded_at` (see the Demo below) makes them pass again.
 
 ### Incremental
 
@@ -383,3 +448,40 @@ where o.updated_at > (select max(updated_at) from {{ this }})
 ```
 
 Rows in the window are replaced through `unique_key`, and the rest of the history stays untouched.
+----
+## Analytical queries
+
+The SQL files in `analyses/` answer business questions from the Gold tables. They use `ref()`, so they always point to the right tables. dbt does not build them: it fills in the table names and you run the result.
+
+| File | Question | What it shows |
+|---|---|---|
+| `orders_by_status.sql` | How many orders, items and how much value per status? | Aggregation: `count(distinct)`, `sum`, `group by` |
+| `revenue_by_category.sql` | Revenue and units per product category, without cancelled orders | Join (`fct_orders` to `dim_products`) and aggregation |
+| `revenue_completed_by_status.sql` | Revenue per category for completed orders only | Join, `group by` and `having` |
+
+```bash
+dbt show --select revenue_by_category      # runs the query and prints the result
+dbt compile --select revenue_by_category   # saves the final SQL in target/compiled/eval_m1_seed/analyses/
+```
+
+Example result with the 20 seed order items (before the Demo rows are added):
+
+| category | orders | units_sold | revenue |
+|---|---|---|---|
+| Skincare | 7 | 9 | 338.0 |
+| Haircare | 6 | 12 | 169.0 |
+| Wellness | 4 | 10 | 67.5 |
+
+---
+
+## Tests
+
+dbt tests check the data after each build. `dbt build` runs the seeds, the models and the tests together.
+
+| Test | What it checks | Where |
+|---|---|---|
+| `not_null`, `unique` | Every key is present and appears once | `seeds/schema.yml`, `models/silver/schema.yml`, `models/gold/schema.yml` |
+| `relationships` | Every `customer_id` and `product_id` in `fct_orders` exists in the dimension | `models/gold/schema.yml` |
+| Singular (custom SQL) | Emails in `silver_customers` are trimmed and lowercase. The query returns bad rows, so any row is a failure | `tests/assert_clean_emails.sql` |
+
+There are 27 tests: 13 `not_null`, 11 `unique`, 2 `relationships` and 1 singular.
